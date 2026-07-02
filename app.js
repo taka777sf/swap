@@ -2,7 +2,7 @@
   "use strict";
 
   const MAX_ITEMS = 5;
-  const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+  const WEEKDAYS = ["月", "火", "水", "木", "金"];
 
   const KEY_ITEMS = "swap-calendar-items";
   const KEY_ENTRIES = "swap-calendar-entries-v2"; // { itemId: { dateKey: amount } }
@@ -254,16 +254,16 @@
 
     const firstOfMonth = new Date(viewY, viewM, 1);
     const daysInMonth = new Date(viewY, viewM + 1, 0).getDate();
-    const startOffset = firstOfMonth.getDay();
-    const totalCells = Math.ceil((daysInMonth + startOffset) / 7) * 7;
+    const mondayOffset = (firstOfMonth.getDay() + 6) % 7; // 0=Mon start-of-week offset
+    const totalCells = Math.ceil((daysInMonth + mondayOffset) / 7) * 7;
 
     const cells = [];
     for (let i = 0; i < totalCells; i++) {
-      const dayNum = i - startOffset + 1;
-      cells.push({ dayNum, inMonth: dayNum >= 1 && dayNum <= daysInMonth });
+      const dayNum = i - mondayOffset + 1;
+      cells.push({ dayNum, inMonth: dayNum >= 1 && dayNum <= daysInMonth, weekdayIdx: i % 7 }); // 0=Mon..6=Sun
     }
     const weeks = [];
-    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7)); // each week = [Mon..Sun]
 
     const monthKeyPrefix = `${viewY}-${pad2(viewM + 1)}`;
     const monthKeys = schedule.sortedKeys.filter((k) => k.startsWith(monthKeyPrefix));
@@ -409,11 +409,10 @@
         <button class="nav-btn" id="next-month">次月 →</button>
       </div>`;
 
-    html += `<div class="cal-scroll"><div class="cal-inner">`;
+    html += `<div class="cal-wrap">`;
     html += `<div class="weekday-row">`;
-    WEEKDAYS.forEach((w, i) => {
-      const cls = i === 0 ? "sun" : i === 6 ? "sat" : "";
-      html += `<div class="${cls}">${w}</div>`;
+    WEEKDAYS.forEach((w) => {
+      html += `<div>${w}</div>`;
     });
     html += `<div class="wk">週計</div></div>`;
 
@@ -427,7 +426,7 @@
       });
 
       html += `<div class="week-row">`;
-      week.forEach((c, ci) => {
+      week.filter((c) => c.weekdayIdx <= 4).forEach((c) => { // Mon(0)..Fri(4) only
         if (!c.inMonth) { html += `<div class="day-cell empty"></div>`; return; }
         const k = dateKey(viewY, viewM, c.dayNum);
         const info = schedule.perDay[k];
@@ -438,18 +437,17 @@
         const progressFrac = carryAfter !== null ? Math.max(0, Math.min(1, carryAfter / item.thresholdYen)) : 0;
         const amtCls = amount === null ? "" : amount > 0 ? "pos" : amount < 0 ? "neg" : "";
         const rawVal = entries[k] !== undefined ? entries[k] : "";
-        const numLbl = ci === 0 ? "sun" : ci === 6 ? "sat" : "";
         const combinedAmt = combinedByDate[k] || 0;
 
         html += `
           <div class="day-cell ${isToday ? "today" : ""}">
             <div class="top-row">
-              <span class="day-num ${numLbl}">${c.dayNum}</span>
+              <span class="day-num">${c.dayNum}</span>
               ${unitsGained > 0 ? `<span class="lot-badge">+${fmtUnit(unitsGained, item.lotStep, item.unitLabel)}</span>` : ""}
             </div>
             <input class="amount ${amtCls}" type="number" inputmode="decimal" placeholder="—"
               data-key="${k}" value="${esc(rawVal)}" />
-            ${showCombined ? `<span class="combined-label">全項目計 ${combinedAmt !== 0 ? fmtYen(combinedAmt) : "—"}</span>` : ""}
+            ${showCombined ? `<span class="combined-label">計 ${combinedAmt !== 0 ? fmtYen(combinedAmt) : "—"}</span>` : ""}
             <div class="bottom">
               <div class="progress-track"><div class="progress-fill" style="width:${progressFrac * 100}%"></div></div>
               <span class="carry-label">繰越 ${carryAfter !== null ? fmtYen(carryAfter) : "—"}</span>
@@ -459,14 +457,14 @@
 
       html += `
         <div class="week-total ${hasAnyEntry ? "has-entry" : ""}">
-          <span class="lbl">週間合計</span>
+          <span class="lbl">週計</span>
           <span class="val ${weekTotal > 0 ? "pos" : weekTotal < 0 ? "neg" : ""}">${hasAnyEntry ? fmtYen(weekTotal) : "—"}</span>
           ${weekUnits > 0 ? `<span class="lots">+${fmtUnit(weekUnits, item.lotStep, item.unitLabel)}</span>` : ""}
         </div>`;
       html += `</div>`;
     });
 
-    html += `</div></div>`;
+    html += `</div>`;
 
     html += `
       <p class="footnote">

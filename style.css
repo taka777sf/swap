@@ -259,43 +259,44 @@ button {
 }
 .month-center { display: flex; align-items: center; gap: 10px; }
 
-.cal-scroll { overflow-x: auto; }
-.cal-inner { min-width: 760px; }
+.cal-wrap { width: 100%; }
 
 .weekday-row, .week-row {
   display: grid;
-  grid-template-columns: repeat(7, 1fr) 96px;
-  gap: 6px;
-  margin-bottom: 6px;
+  grid-template-columns: repeat(5, 1fr) 0.85fr;
+  gap: 4px;
+  margin-bottom: 4px;
 }
 .weekday-row div {
   text-align: center;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   color: var(--text-muted);
 }
-.weekday-row div.sun { color: var(--red); }
-.weekday-row div.sat { color: var(--weekend); }
 .weekday-row div.wk { color: var(--gold); font-weight: 700; }
 
 .day-cell {
-  min-height: 102px;
+  min-height: 96px;
   background: var(--panel);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
-  padding: 6px 7px 7px;
+  padding: 4px 4px 5px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
+  min-width: 0;
 }
 .day-cell.today { background: #161C26; border-color: var(--gold); }
-.day-cell.empty { background: transparent; border: none; min-height: 102px; }
+.day-cell.empty { background: transparent; border: none; min-height: 96px; }
 
 .day-cell .combined-label {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
+  font-size: 8.5px;
   color: var(--weekend);
   opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .day-cell .top-row {
@@ -305,32 +306,32 @@ button {
 }
 .day-cell .day-num {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
 }
-.day-cell .day-num.sun { color: var(--red); }
-.day-cell .day-num.sat { color: var(--weekend); }
 
 .day-cell .lot-badge {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9.5px;
+  font-size: 8px;
   font-weight: 700;
   color: var(--gold);
   background: var(--gold-soft);
   border-radius: 3px;
-  padding: 1px 4px;
-  letter-spacing: 0.2px;
+  padding: 1px 3px;
+  letter-spacing: 0.1px;
+  white-space: nowrap;
 }
 
 .day-cell input.amount {
   width: 100%;
+  min-width: 0;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--border);
   color: var(--text-faint);
   font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
+  font-size: 11.5px;
   font-weight: 600;
   padding: 2px 0;
 }
@@ -356,8 +357,11 @@ button {
 }
 .day-cell .carry-label {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9.5px;
+  font-size: 8.5px;
   color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .week-total {
@@ -369,26 +373,27 @@ button {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  min-height: 102px;
+  min-height: 96px;
   padding: 4px 2px;
 }
 .week-total.has-entry {
   background: var(--green-soft);
   border-color: #254235;
 }
-.week-total .lbl { font-size: 9px; color: var(--text-faint); }
+.week-total .lbl { font-size: 8px; color: var(--text-faint); }
 .week-total .val {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12.5px;
+  font-size: 10.5px;
   font-weight: 700;
   color: var(--text-faint);
   text-align: center;
+  word-break: break-all;
 }
 .week-total .val.pos { color: var(--green); }
 .week-total .val.neg { color: var(--red); }
 .week-total .lots {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9.5px;
+  font-size: 8.5px;
   color: var(--gold);
 }
 
