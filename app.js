@@ -417,12 +417,13 @@
     html += `<div class="wk">週計</div></div>`;
 
     weeks.forEach((week) => {
-      let weekTotal = 0, weekUnits = 0, hasAnyEntry = false;
+      let weekTotal = 0, weekUnits = 0, hasAnyEntry = false, weekCombinedTotal = 0;
       week.forEach((c) => {
         if (!c.inMonth) return;
         const k = dateKey(viewY, viewM, c.dayNum);
         const info = schedule.perDay[k];
         if (info) { weekTotal += info.amount; weekUnits += info.unitsGained; hasAnyEntry = true; }
+        weekCombinedTotal += combinedByDate[k] || 0;
       });
 
       html += `<div class="week-row">`;
@@ -460,6 +461,7 @@
           <span class="lbl">週計</span>
           <span class="val ${weekTotal > 0 ? "pos" : weekTotal < 0 ? "neg" : ""}">${hasAnyEntry ? fmtYen(weekTotal) : "—"}</span>
           ${weekUnits > 0 ? `<span class="lots">+${fmtUnit(weekUnits, item.lotStep, item.unitLabel)}</span>` : ""}
+          ${showCombined ? `<span class="combined-total-line">全計 ${weekCombinedTotal !== 0 ? fmtYen(weekCombinedTotal) : "—"}</span>` : ""}
         </div>`;
       html += `</div>`;
     });

@@ -396,6 +396,12 @@ button {
   font-size: 8.5px;
   color: var(--gold);
 }
+.week-total .combined-total-line {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: var(--weekend);
+  opacity: 0.85;
+}
 
 .footnote {
   font-size: 10.5px;
