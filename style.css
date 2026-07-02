@@ -88,6 +88,24 @@ button {
 }
 .icon-btn:active { color: var(--gold); border-color: var(--gold); }
 
+.persist-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.backup-reminder {
+  background: var(--goldSoft, #3A311C);
+  background: #241E12;
+  border: 1px solid #4A3D22;
+  color: #D9BE7A;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 11.5px;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
 .item-tabs {
   display: flex;
   gap: 6px;
@@ -193,6 +211,7 @@ button {
 .stat-chip .label { font-size: 10.5px; color: var(--text-muted); letter-spacing: 0.3px; }
 .stat-chip .value { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; }
 .stat-chip .sub { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-faint); }
+.stat-chip.combined { border-color: #2C3B52; background: #121A24; }
 
 .initial-carry-bar {
   display: flex;
@@ -260,17 +279,24 @@ button {
 .weekday-row div.wk { color: var(--gold); font-weight: 700; }
 
 .day-cell {
-  min-height: 92px;
+  min-height: 102px;
   background: var(--panel);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   padding: 6px 7px 7px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 .day-cell.today { background: #161C26; border-color: var(--gold); }
-.day-cell.empty { background: transparent; border: none; min-height: 92px; }
+.day-cell.empty { background: transparent; border: none; min-height: 102px; }
+
+.day-cell .combined-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--weekend);
+  opacity: 0.85;
+}
 
 .day-cell .top-row {
   display: flex;
@@ -343,7 +369,7 @@ button {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  min-height: 92px;
+  min-height: 102px;
   padding: 4px 2px;
 }
 .week-total.has-entry {

@@ -7,6 +7,7 @@
   const KEY_ITEMS = "swap-calendar-items";
   const KEY_ENTRIES = "swap-calendar-entries-v2"; // { itemId: { dateKey: amount } }
   const KEY_INITIAL = "swap-calendar-initial-v2"; // { itemId: number }
+  const KEY_LAST_BACKUP = "swap-calendar-last-backup"; // ISO timestamp string
 
   // legacy (single-item) keys from the first version, used for one-time migration
   const LEGACY_ENTRIES = "swap-calendar-entries";
@@ -24,9 +25,31 @@
     initialCarry: {}, // itemId -> number
     showItemSettings: false,
     showAddItem: false,
+    persistStatus: "unknown", // "unknown" | "granted" | "denied" | "unsupported"
+    lastBackupAt: null,
   };
   let saveTimer = null;
   let saveIndicatorTimer = null;
+
+  // ---------- persistent storage (best-effort, reduces eviction risk) ----------
+  async function requestPersistentStorage() {
+    try {
+      if (!navigator.storage || !navigator.storage.persist) {
+        state.persistStatus = "unsupported";
+        return;
+      }
+      const already = await navigator.storage.persisted();
+      if (already) {
+        state.persistStatus = "granted";
+      } else {
+        const granted = await navigator.storage.persist();
+        state.persistStatus = granted ? "granted" : "denied";
+      }
+    } catch (e) {
+      state.persistStatus = "unsupported";
+    }
+    render();
+  }
 
   // ---------- storage / migration ----------
   function uid() {
@@ -66,6 +89,12 @@
     state.entries = entries;
     state.initialCarry = initial;
     state.activeItemId = items[0].id;
+
+    try {
+      state.lastBackupAt = localStorage.getItem(KEY_LAST_BACKUP);
+    } catch (e) {
+      state.lastBackupAt = null;
+    }
   }
 
   function persistAll(indicator) {
@@ -112,6 +141,13 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+
+    try {
+      const now = new Date().toISOString();
+      localStorage.setItem(KEY_LAST_BACKUP, now);
+      state.lastBackupAt = now;
+      render();
+    } catch (e) {}
   }
 
   function importBackupFile(file) {
@@ -160,6 +196,19 @@
   }
 
   function getItem(id) { return state.items.find((it) => it.id === id); }
+
+  // sum every item's raw entry for a given date, across all items
+  function computeCombinedByDate(items, entriesByItem) {
+    const combined = {};
+    items.forEach((it) => {
+      const entries = entriesByItem[it.id] || {};
+      Object.keys(entries).forEach((k) => {
+        const amt = Number(entries[k]) || 0;
+        combined[k] = (combined[k] || 0) + amt;
+      });
+    });
+    return combined;
+  }
 
   function computeSchedule(entries, initialCarry, thresholdYen, lotStep) {
     const keys = Object.keys(entries)
@@ -226,21 +275,47 @@
     const isCurrentMonth = viewY === today.getFullYear() && viewM === today.getMonth();
     const todayKey = dateKey(today.getFullYear(), today.getMonth(), today.getDate());
 
+    const combinedByDate = computeCombinedByDate(state.items, state.entries);
+    const monthCombinedTotal = Object.keys(combinedByDate)
+      .filter((k) => k.startsWith(monthKeyPrefix))
+      .reduce((s, k) => s + combinedByDate[k], 0);
+    const showCombined = state.items.length > 1;
+
     let html = "";
+
+    const persistLabel =
+      state.persistStatus === "granted" ? "🛡 永続保存 有効" :
+      state.persistStatus === "denied" ? "🛡 永続保存 未許可" :
+      state.persistStatus === "unsupported" ? "" : "";
+    const persistColor =
+      state.persistStatus === "granted" ? "var(--green)" :
+      state.persistStatus === "denied" ? "var(--text-faint)" : "var(--text-faint)";
 
     html += `
       <div class="header">
         <div>
-          <h1>積立<span class="accent">トラッカー</span></h1>
+          <h1>スワップ<span class="accent">積立</span>トラッカー</h1>
           <p>項目ごとに「○円貯まるごとに○単位」を管理・自動繰越</p>
         </div>
         <div class="header-actions">
           <span id="save-indicator" class="save-indicator"></span>
+          ${persistLabel ? `<span class="persist-badge" style="color:${persistColor}">${persistLabel}</span>` : ""}
           <button class="icon-btn" id="export-btn" title="バックアップを書き出す">⇩ 保存</button>
           <button class="icon-btn" id="import-btn" title="バックアップから復元">⇧ 復元</button>
           <input type="file" id="import-file" accept="application/json" style="display:none" />
         </div>
       </div>`;
+
+    const daysSinceBackup = state.lastBackupAt
+      ? Math.floor((today.getTime() - new Date(state.lastBackupAt).getTime()) / 86400000)
+      : null;
+    if (daysSinceBackup === null || daysSinceBackup >= 14) {
+      html += `
+        <div class="backup-reminder">
+          ${daysSinceBackup === null ? "まだバックアップを書き出していません。" : `最後のバックアップから${daysSinceBackup}日経っています。`}
+          「⇩ 保存」でJSONファイルを書き出しておくと安心です。
+        </div>`;
+    }
 
     html += `<div class="item-tabs">`;
     state.items.forEach((it) => {
@@ -292,9 +367,15 @@
     html += `
       <div class="stats">
         <div class="stat-chip">
-          <span class="label">今月合計</span>
+          <span class="label">今月合計（${esc(item.name)}）</span>
           <span class="value" style="color:${monthTotal >= 0 ? "var(--green)" : "var(--red)"}">${fmtYen(monthTotal)}</span>
         </div>
+        ${showCombined ? `
+        <div class="stat-chip combined">
+          <span class="label">今月合計（全項目）</span>
+          <span class="value" style="color:${monthCombinedTotal >= 0 ? "var(--green)" : "var(--red)"}">${fmtYen(monthCombinedTotal)}</span>
+          <span class="sub">${state.items.length}項目の合計</span>
+        </div>` : ""}
         <div class="stat-chip">
           <span class="label">今月獲得（${esc(item.unitLabel)}）</span>
           <span class="value" style="color:var(--gold)">+${fmtUnit(monthUnits, item.lotStep, item.unitLabel)}</span>
@@ -358,6 +439,7 @@
         const amtCls = amount === null ? "" : amount > 0 ? "pos" : amount < 0 ? "neg" : "";
         const rawVal = entries[k] !== undefined ? entries[k] : "";
         const numLbl = ci === 0 ? "sun" : ci === 6 ? "sat" : "";
+        const combinedAmt = combinedByDate[k] || 0;
 
         html += `
           <div class="day-cell ${isToday ? "today" : ""}">
@@ -367,6 +449,7 @@
             </div>
             <input class="amount ${amtCls}" type="number" inputmode="decimal" placeholder="—"
               data-key="${k}" value="${esc(rawVal)}" />
+            ${showCombined ? `<span class="combined-label">全項目計 ${combinedAmt !== 0 ? fmtYen(combinedAmt) : "—"}</span>` : ""}
             <div class="bottom">
               <div class="progress-track"><div class="progress-fill" style="width:${progressFrac * 100}%"></div></div>
               <span class="carry-label">繰越 ${carryAfter !== null ? fmtYen(carryAfter) : "—"}</span>
@@ -525,4 +608,5 @@
   // ---------- init ----------
   loadState();
   render();
+  requestPersistentStorage();
 })();
