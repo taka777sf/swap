@@ -195,6 +195,7 @@
           `バックアップを復元します（${data.exportedAt ? "作成日: " + data.exportedAt.slice(0, 10) : "日時不明"}）。\n現在のデータは上書きされます。よろしいですか？`
         );
         if (!ok) return;
+        const backupHadConfirmedLots = data.confirmedLots !== undefined && data.confirmedLots !== null;
         state.items = data.items;
         state.entries = data.entries || {};
         state.initialCarry = data.initialCarry || {};
@@ -206,6 +207,17 @@
           if (!state.manualLots[it.id]) state.manualLots[it.id] = {};
           if (!state.confirmedLots[it.id]) state.confirmedLots[it.id] = {};
         });
+        // this backup predates the confirm-to-count feature entirely, so treat every
+        // already-triggered lot as already confirmed — otherwise restoring an old
+        // backup would silently wipe out everything the user had already earned.
+        if (!backupHadConfirmedLots) {
+          state.items.forEach((it) => {
+            const sched = computeSchedule(state.entries[it.id] || {}, state.initialCarry[it.id] || 0, it.thresholdYen, it.lotStep);
+            sched.sortedKeys.forEach((k) => {
+              if (sched.perDay[k].unitsGained > 0) state.confirmedLots[it.id][k] = true;
+            });
+          });
+        }
         state.activeItemId = state.items[0] ? state.items[0].id : null;
         persistAll(true);
         render();
