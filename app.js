@@ -57,7 +57,7 @@
   }
 
   function defaultItems() {
-    return [{ id: uid(), name: "TRY/JPYスワップ", thresholdYen: 2000, lotStep: 0.1, unitLabel: "ロット" }];
+    return [{ id: uid(), name: "TRY/JPYスワップ", thresholdYen: 2000, lotStep: 0.1, unitLabel: "ロット", initialLots: 0 }];
   }
 
   function loadState() {
@@ -309,13 +309,11 @@
     const daysSinceBackup = state.lastBackupAt
       ? Math.floor((today.getTime() - new Date(state.lastBackupAt).getTime()) / 86400000)
       : null;
-    if (daysSinceBackup === null || daysSinceBackup >= 14) {
-      html += `
+    const backupReminderHtml = (daysSinceBackup === null || daysSinceBackup >= 14) ? `
         <div class="backup-reminder">
           ${daysSinceBackup === null ? "まだバックアップを書き出していません。" : `最後のバックアップから${daysSinceBackup}日経っています。`}
           「⇩ 保存」でJSONファイルを書き出しておくと安心です。
-        </div>`;
-    }
+        </div>` : "";
 
     html += `<div class="item-tabs">`;
     state.items.forEach((it) => {
@@ -336,6 +334,7 @@
             <label>閾値（円）<input id="new-item-threshold" type="number" value="2000" /></label>
             <label>加算単位<input id="new-item-step" type="number" step="0.01" value="0.1" /></label>
             <label>単位ラベル<input id="new-item-unit" type="text" value="ロット" maxlength="6" /></label>
+            <label>初期保有数（任意）<input id="new-item-initial-lots" type="number" step="0.01" value="0" /></label>
           </div>
           <div class="item-form-actions">
             <button class="nav-btn" id="cancel-add-item">キャンセル</button>
@@ -353,6 +352,7 @@
             <label>閾値（円）<input id="edit-item-threshold" type="number" value="${item.thresholdYen}" /></label>
             <label>加算単位<input id="edit-item-step" type="number" step="0.01" value="${item.lotStep}" /></label>
             <label>単位ラベル<input id="edit-item-unit" type="text" value="${esc(item.unitLabel)}" maxlength="6" /></label>
+            <label>初期保有数（任意）<input id="edit-item-initial-lots" type="number" step="0.01" value="${Number(item.initialLots) || 0}" /></label>
           </div>
           <div class="item-form-actions">
             ${state.items.length > 1 ? `<button class="nav-btn danger" id="delete-item-btn">この項目を削除</button>` : `<span></span>`}
@@ -387,12 +387,15 @@
         </div>
         <div class="stat-chip">
           <span class="label">累計（${esc(item.unitLabel)}）</span>
-          <span class="value" style="color:var(--gold)">${fmtUnit(schedule.totalUnits, item.lotStep, item.unitLabel)}</span>
-          <span class="sub">累計 ${fmtYen(schedule.totalAmount + (Number(initialCarry) || 0))}</span>
+          <div class="dual-value">
+            <span class="value" style="color:var(--gold)">${fmtUnit(schedule.totalUnits, item.lotStep, item.unitLabel)}</span>
+            ${Number(item.initialLots) ? `<span class="value alt">計 ${fmtUnit((Number(item.initialLots) || 0) + schedule.totalUnits, item.lotStep, item.unitLabel)}</span>` : ""}
+          </div>
+          <span class="sub">累計 ${fmtYen(schedule.totalAmount + (Number(initialCarry) || 0))}${Number(item.initialLots) ? ` ・ 初期${fmtUnit(Number(item.initialLots), item.lotStep, item.unitLabel)}` : ""}</span>
         </div>
       </div>`;
 
-    html += `
+    const initialCarryBarHtml = `
       <div class="initial-carry-bar">
         <span class="lbl">記録開始前の繰越残高（任意）</span>
         <input type="number" id="initial-carry-input" value="${esc(initialCarry)}" />
@@ -468,6 +471,9 @@
 
     html += `</div>`;
 
+    html += initialCarryBarHtml;
+    html += backupReminderHtml;
+
     html += `
       <p class="footnote">
         各日のマスに金額を入力すると自動保存されます。繰越が閾値に達した日は金色バッジで表示し、余剰分は翌日以降へ繰り越されます。
@@ -523,11 +529,12 @@
       const threshold = Number(document.getElementById("new-item-threshold").value);
       const step = Number(document.getElementById("new-item-step").value);
       const unit = document.getElementById("new-item-unit").value.trim() || "件";
+      const initialLots = Number(document.getElementById("new-item-initial-lots").value) || 0;
       if (!name) { alert("項目名を入力してください。"); return; }
       if (state.items.length >= MAX_ITEMS) { alert(`項目は最大${MAX_ITEMS}個までです。`); return; }
       if (!threshold || threshold <= 0) { alert("閾値は1円以上で入力してください。"); return; }
       const id = uid();
-      state.items.push({ id, name, thresholdYen: threshold, lotStep: step || 0.1, unitLabel: unit });
+      state.items.push({ id, name, thresholdYen: threshold, lotStep: step || 0.1, unitLabel: unit, initialLots });
       state.entries[id] = {};
       state.initialCarry[id] = 0;
       state.activeItemId = id;
@@ -546,9 +553,10 @@
       const threshold = Number(document.getElementById("edit-item-threshold").value);
       const step = Number(document.getElementById("edit-item-step").value);
       const unit = document.getElementById("edit-item-unit").value.trim() || "件";
+      const initialLots = Number(document.getElementById("edit-item-initial-lots").value) || 0;
       if (!name) { alert("項目名を入力してください。"); return; }
       if (!threshold || threshold <= 0) { alert("閾値は1円以上で入力してください。"); return; }
-      item.name = name; item.thresholdYen = threshold; item.lotStep = step || 0.1; item.unitLabel = unit;
+      item.name = name; item.thresholdYen = threshold; item.lotStep = step || 0.1; item.unitLabel = unit; item.initialLots = initialLots;
       state.showItemSettings = false;
       persistAll(true);
       render();

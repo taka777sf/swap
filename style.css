@@ -212,6 +212,17 @@ button {
 .stat-chip .value { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; }
 .stat-chip .sub { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-faint); }
 .stat-chip.combined { border-color: #2C3B52; background: #121A24; }
+.stat-chip .dual-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.stat-chip .value.alt {
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0.85;
+}
 
 .initial-carry-bar {
   display: flex;
