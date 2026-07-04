@@ -8,6 +8,7 @@
   const KEY_ENTRIES = "swap-calendar-entries-v2"; // { itemId: { dateKey: amount } }
   const KEY_INITIAL = "swap-calendar-initial-v2"; // { itemId: number }
   const KEY_MANUAL_LOTS = "swap-calendar-manual-lots"; // { itemId: { dateKey: lots } }
+  const KEY_CONFIRMED_LOTS = "swap-calendar-confirmed-lots"; // { itemId: { dateKey: true } }
   const KEY_LAST_BACKUP = "swap-calendar-last-backup"; // ISO timestamp string
 
   // legacy (single-item) keys from the first version, used for one-time migration
@@ -25,6 +26,7 @@
     entries: {},      // itemId -> { dateKey: amount }
     initialCarry: {}, // itemId -> number
     manualLots: {},   // itemId -> { dateKey: lots }  (bulk/manual lot purchases, outside the yen threshold)
+    confirmedLots: {}, // itemId -> { dateKey: true }  (auto-triggered lots the user has confirmed as actually purchased)
     showItemSettings: false,
     showAddItem: false,
     persistStatus: "unknown", // "unknown" | "granted" | "denied" | "unsupported"
@@ -32,6 +34,7 @@
   };
   let saveTimer = null;
   let saveIndicatorTimer = null;
+
 
   // ---------- persistent storage (best-effort, reduces eviction risk) ----------
   async function requestPersistentStorage() {
@@ -63,11 +66,15 @@
   }
 
   function loadState() {
-    let items = null, entries = null, initial = null, manualLots = null;
+    let items = null, entries = null, initial = null, manualLots = null, confirmedLots = null;
     try { const r = localStorage.getItem(KEY_ITEMS); if (r) items = JSON.parse(r); } catch (e) {}
     try { const r = localStorage.getItem(KEY_ENTRIES); if (r) entries = JSON.parse(r); } catch (e) {}
     try { const r = localStorage.getItem(KEY_INITIAL); if (r) initial = JSON.parse(r); } catch (e) {}
     try { const r = localStorage.getItem(KEY_MANUAL_LOTS); if (r) manualLots = JSON.parse(r); } catch (e) {}
+    const hadConfirmedKeyBefore = (() => {
+      try { return localStorage.getItem(KEY_CONFIRMED_LOTS) !== null; } catch (e) { return false; }
+    })();
+    try { const r = localStorage.getItem(KEY_CONFIRMED_LOTS); if (r) confirmedLots = JSON.parse(r); } catch (e) {}
 
     if (!items) {
       // check for legacy single-item data to migrate
@@ -84,16 +91,31 @@
     if (!entries) entries = {};
     if (!initial) initial = {};
     if (!manualLots) manualLots = {};
+    if (!confirmedLots) confirmedLots = {};
     items.forEach((it) => {
       if (!entries[it.id]) entries[it.id] = {};
       if (initial[it.id] === undefined) initial[it.id] = 0;
       if (!manualLots[it.id]) manualLots[it.id] = {};
+      if (!confirmedLots[it.id]) confirmedLots[it.id] = {};
     });
+
+    // one-time migration: this confirm-to-count feature is new, so treat every
+    // already-triggered lot from before today as already confirmed/held —
+    // otherwise everyone's existing totals would suddenly drop to zero.
+    if (!hadConfirmedKeyBefore) {
+      items.forEach((it) => {
+        const sched = computeSchedule(entries[it.id] || {}, initial[it.id] || 0, it.thresholdYen, it.lotStep);
+        sched.sortedKeys.forEach((k) => {
+          if (sched.perDay[k].unitsGained > 0) confirmedLots[it.id][k] = true;
+        });
+      });
+    }
 
     state.items = items;
     state.entries = entries;
     state.initialCarry = initial;
     state.manualLots = manualLots;
+    state.confirmedLots = confirmedLots;
     state.activeItemId = items[0].id;
 
     try {
@@ -112,6 +134,7 @@
         localStorage.setItem(KEY_ENTRIES, JSON.stringify(state.entries));
         localStorage.setItem(KEY_INITIAL, JSON.stringify(state.initialCarry));
         localStorage.setItem(KEY_MANUAL_LOTS, JSON.stringify(state.manualLots));
+        localStorage.setItem(KEY_CONFIRMED_LOTS, JSON.stringify(state.confirmedLots));
         if (indicator) setSaveIndicator("saved");
       } catch (e) {
         if (indicator) setSaveIndicator("idle");
@@ -132,12 +155,13 @@
   function exportBackup() {
     const payload = {
       type: "swap-calendar-backup",
-      version: 3,
+      version: 4,
       exportedAt: new Date().toISOString(),
       items: state.items,
       entries: state.entries,
       initialCarry: state.initialCarry,
       manualLots: state.manualLots,
+      confirmedLots: state.confirmedLots,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -175,10 +199,12 @@
         state.entries = data.entries || {};
         state.initialCarry = data.initialCarry || {};
         state.manualLots = data.manualLots || {};
+        state.confirmedLots = data.confirmedLots || {};
         state.items.forEach((it) => {
           if (!state.entries[it.id]) state.entries[it.id] = {};
           if (state.initialCarry[it.id] === undefined) state.initialCarry[it.id] = 0;
           if (!state.manualLots[it.id]) state.manualLots[it.id] = {};
+          if (!state.confirmedLots[it.id]) state.confirmedLots[it.id] = {};
         });
         state.activeItemId = state.items[0] ? state.items[0].id : null;
         persistAll(true);
@@ -211,17 +237,28 @@
   }
 
   // total holdings (initial + auto-earned + manual purchases) for one item
+  // sum of auto-triggered lots that have been confirmed as actually purchased
+  function confirmedUnitsForItem(schedule, confirmedForItem) {
+    return schedule.sortedKeys.reduce((s, k) => {
+      const info = schedule.perDay[k];
+      return s + (info.unitsGained > 0 && confirmedForItem[k] ? info.unitsGained : 0);
+    }, 0);
+  }
+
   function totalHeldForItem(item, schedule) {
     const manual = state.manualLots[item.id] || {};
     const manualTotal = Object.values(manual).reduce((s, v) => s + (Number(v) || 0), 0);
+    const confirmedForItem = state.confirmedLots[item.id] || {};
+    const confirmedUnits = confirmedUnitsForItem(schedule, confirmedForItem);
     return {
       manualTotal,
-      total: (Number(item.initialLots) || 0) + schedule.totalUnits + manualTotal,
+      confirmedUnits,
+      total: (Number(item.initialLots) || 0) + confirmedUnits + manualTotal,
     };
   }
 
   // group all items' holdings by unit label, so mismatched units (ロット / 個 / 垢...) don't get summed together
-  function computeGroupedHoldings(items, entriesByItem, initialCarryByItem, manualLotsByItem) {
+  function computeGroupedHoldings(items, entriesByItem, initialCarryByItem, manualLotsByItem, confirmedLotsByItem) {
     const groups = {}; // label -> total
     items.forEach((it) => {
       const entries = entriesByItem[it.id] || {};
@@ -229,7 +266,9 @@
       const sched = computeSchedule(entries, initialCarry, it.thresholdYen, it.lotStep);
       const manual = manualLotsByItem[it.id] || {};
       const manualTotal = Object.values(manual).reduce((s, v) => s + (Number(v) || 0), 0);
-      const total = (Number(it.initialLots) || 0) + sched.totalUnits + manualTotal;
+      const confirmedForItem = confirmedLotsByItem[it.id] || {};
+      const confirmedUnits = confirmedUnitsForItem(sched, confirmedForItem);
+      const total = (Number(it.initialLots) || 0) + confirmedUnits + manualTotal;
       groups[it.unitLabel] = (groups[it.unitLabel] || 0) + total;
     });
     return Object.keys(groups).map((label) => ({ label, total: groups[label] }));
@@ -291,6 +330,7 @@
     const initialCarry = state.initialCarry[item.id] || 0;
     const schedule = computeSchedule(entries, initialCarry, item.thresholdYen, item.lotStep);
     const manualLots = state.manualLots[item.id] || {};
+    const confirmedForItem = state.confirmedLots[item.id] || {};
     const { manualTotal, total: totalHeld } = totalHeldForItem(item, schedule);
     const { viewY, viewM } = state;
 
@@ -310,11 +350,12 @@
     const monthKeyPrefix = `${viewY}-${pad2(viewM + 1)}`;
     const monthKeys = schedule.sortedKeys.filter((k) => k.startsWith(monthKeyPrefix));
     const monthTotal = monthKeys.reduce((s, k) => s + schedule.perDay[k].amount, 0);
-    const monthUnits = monthKeys.reduce((s, k) => s + schedule.perDay[k].unitsGained, 0);
+    const monthConfirmedUnits = monthKeys.reduce((s, k) => s + (schedule.perDay[k].unitsGained > 0 && confirmedForItem[k] ? schedule.perDay[k].unitsGained : 0), 0);
+    const monthPendingUnits = monthKeys.reduce((s, k) => s + (schedule.perDay[k].unitsGained > 0 && !confirmedForItem[k] ? schedule.perDay[k].unitsGained : 0), 0);
     const monthManualLots = Object.keys(manualLots)
       .filter((k) => k.startsWith(monthKeyPrefix))
       .reduce((s, k) => s + (Number(manualLots[k]) || 0), 0);
-    const monthUnitsCombined = monthUnits + monthManualLots;
+    const monthUnitsCombined = monthConfirmedUnits + monthManualLots;
     const lastDayKey = dateKey(viewY, viewM, daysInMonth);
     const carryAtMonthEnd = carryAsOf(schedule.perDay, schedule.sortedKeys, lastDayKey, initialCarry);
     const monthLabel = `${viewY}年${viewM + 1}月`;
@@ -327,7 +368,7 @@
       .reduce((s, k) => s + combinedByDate[k], 0);
     const showCombined = state.items.length > 1;
     const groupedHoldings = showCombined
-      ? computeGroupedHoldings(state.items, state.entries, state.initialCarry, state.manualLots)
+      ? computeGroupedHoldings(state.items, state.entries, state.initialCarry, state.manualLots, state.confirmedLots)
       : [];
 
     let html = "";
@@ -428,7 +469,7 @@
         <div class="stat-chip">
           <span class="label">今月獲得（${esc(item.unitLabel)}）</span>
           <span class="value" style="color:var(--gold)">+${fmtUnit(monthUnitsCombined, item.lotStep, item.unitLabel)}</span>
-          ${monthManualLots > 0 ? `<span class="sub">内 購入分 +${fmtUnit(monthManualLots, item.lotStep, item.unitLabel)}</span>` : ""}
+          ${(monthManualLots > 0 || monthPendingUnits > 0) ? `<span class="sub">${monthManualLots > 0 ? `購入+${fmtUnit(monthManualLots, item.lotStep, item.unitLabel)} ` : ""}${monthPendingUnits > 0 ? `・未確定+${fmtUnit(monthPendingUnits, item.lotStep, item.unitLabel)}` : ""}</span>` : ""}
         </div>
         <div class="stat-chip">
           <span class="label">繰越残高（月末時点）</span>
@@ -440,7 +481,7 @@
           <div class="dual-value">
             <span class="value" style="color:var(--gold)">${fmtUnit(totalHeld, item.lotStep, item.unitLabel)}</span>
           </div>
-          <span class="sub">初期${fmtUnit(Number(item.initialLots) || 0, item.lotStep, item.unitLabel)} + 自動${fmtUnit(schedule.totalUnits, item.lotStep, item.unitLabel)}${manualTotal ? ` + 購入${fmtUnit(manualTotal, item.lotStep, item.unitLabel)}` : ""}</span>
+          <span class="sub">初期${fmtUnit(Number(item.initialLots) || 0, item.lotStep, item.unitLabel)} + 確定${fmtUnit(confirmedUnitsForItem(schedule, confirmedForItem), item.lotStep, item.unitLabel)}${manualTotal ? ` + 購入${fmtUnit(manualTotal, item.lotStep, item.unitLabel)}` : ""}</span>
         </div>
         ${showCombined ? `
         <div class="stat-chip combined">
@@ -490,31 +531,32 @@
         const k = dateKey(viewY, viewM, c.dayNum);
         const info = schedule.perDay[k];
         const amount = info ? info.amount : null;
-        const carryAfter = info ? info.carryAfter : null;
         const unitsGained = info ? info.unitsGained : 0;
+        const isConfirmed = !!confirmedForItem[k];
         const isToday = k === todayKey;
-        const progressFrac = carryAfter !== null ? Math.max(0, Math.min(1, carryAfter / item.thresholdYen)) : 0;
         const amtCls = amount === null ? "" : amount > 0 ? "pos" : amount < 0 ? "neg" : "";
         const rawVal = entries[k] !== undefined ? entries[k] : "";
         const combinedAmt = combinedByDate[k] || 0;
-        const manualLotVal = Number(manualLots[k]) || 0;
+        const manualLotVal = manualLots[k] !== undefined ? manualLots[k] : "";
+
+        let lotIndicator = "";
+        if (unitsGained > 0) {
+          lotIndicator = isConfirmed
+            ? `<button class="confirm-lot-btn confirmed" data-key="${k}" title="購入済み（タップで取り消し）">✓ ${fmtUnit(unitsGained, item.lotStep, item.unitLabel)}</button>`
+            : `<button class="confirm-lot-btn pending" data-key="${k}" title="購入したらタップ">☐ ${fmtUnit(unitsGained, item.lotStep, item.unitLabel)}</button>`;
+        }
 
         html += `
           <div class="day-cell ${isToday ? "today" : ""}">
             <div class="top-row">
               <span class="day-num">${c.dayNum}</span>
-              <span class="badge-group">
-                ${unitsGained > 0 ? `<span class="lot-badge">+${fmtUnit(unitsGained, item.lotStep, item.unitLabel)}</span>` : ""}
-                <button class="manual-lot-btn ${manualLotVal ? "has-value" : ""}" data-key="${k}" title="まとめ購入を記録">${manualLotVal ? `🛒${fmtNumTrim(manualLotVal)}` : "🛒"}</button>
-              </span>
+              ${lotIndicator}
             </div>
-            <input class="amount ${amtCls}" type="number" inputmode="decimal" placeholder="—"
+            <input class="amount ${amtCls}" type="number" inputmode="decimal" placeholder="円"
               data-key="${k}" value="${esc(rawVal)}" />
+            <input class="manual-lots-input" type="number" inputmode="decimal" step="0.01" placeholder="${esc(item.unitLabel)}"
+              data-key="${k}" value="${esc(manualLotVal)}" />
             ${showCombined ? `<span class="combined-label">計 ${combinedAmt !== 0 ? fmtYen(combinedAmt) : "—"}</span>` : ""}
-            <div class="bottom">
-              <div class="progress-track"><div class="progress-fill" style="width:${progressFrac * 100}%"></div></div>
-              <span class="carry-label">繰越 ${carryAfter !== null ? fmtYen(carryAfter) : "—"}</span>
-            </div>
           </div>`;
       });
 
@@ -596,6 +638,7 @@
       state.items.push({ id, name, thresholdYen: threshold, lotStep: step || 0.1, unitLabel: unit, initialLots });
       state.entries[id] = {};
       state.manualLots[id] = {};
+      state.confirmedLots[id] = {};
       state.initialCarry[id] = 0;
       state.activeItemId = id;
       state.showAddItem = false;
@@ -631,6 +674,7 @@
       delete state.entries[item.id];
       delete state.initialCarry[item.id];
       delete state.manualLots[item.id];
+      delete state.confirmedLots[item.id];
       state.activeItemId = state.items[0] ? state.items[0].id : null;
       state.showItemSettings = false;
       persistAll(true);
@@ -663,24 +707,27 @@
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") input.blur(); });
     });
 
-    document.querySelectorAll(".manual-lot-btn").forEach((btn) => {
+    document.querySelectorAll(".manual-lots-input").forEach((input) => {
+      input.addEventListener("blur", () => {
+        const key = input.dataset.key;
+        const val = input.value;
+        const manual = state.manualLots[state.activeItemId] || (state.manualLots[state.activeItemId] = {});
+        if (val === "") { delete manual[key]; }
+        else {
+          const n = Number(val);
+          if (!Number.isNaN(n)) { if (n === 0) delete manual[key]; else manual[key] = n; }
+        }
+        persistAll(true);
+        render();
+      });
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") input.blur(); });
+    });
+
+    document.querySelectorAll(".confirm-lot-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const key = btn.dataset.key;
-        const item = getItem(state.activeItemId);
-        const manual = state.manualLots[state.activeItemId] || (state.manualLots[state.activeItemId] = {});
-        const current = manual[key] !== undefined ? manual[key] : "";
-        const input = window.prompt(
-          `${key} にまとめて購入した${item.unitLabel}数を入力してください（削除する場合は空欄でOK）`,
-          current === "" ? "" : String(current)
-        );
-        if (input === null) return; // cancelled
-        if (input.trim() === "") {
-          delete manual[key];
-        } else {
-          const n = Number(input);
-          if (Number.isNaN(n)) { alert("数値を入力してください。"); return; }
-          if (n === 0) { delete manual[key]; } else { manual[key] = n; }
-        }
+        const confirmed = state.confirmedLots[state.activeItemId] || (state.confirmedLots[state.activeItemId] = {});
+        if (confirmed[key]) { delete confirmed[key]; } else { confirmed[key] = true; }
         persistAll(true);
         render();
       });
