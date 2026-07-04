@@ -581,13 +581,19 @@
 
     const perLotRate = Number(item.perLotDailyYen);
     const perLotRateSafe = Number.isFinite(perLotRate) ? perLotRate : 25;
-    const proj7 = totalHeld * perLotRateSafe * 7;
-    const proj30 = totalHeld * perLotRateSafe * 30;
+    const crossItemLots = state.items
+      .filter((it) => it.unitLabel === item.unitLabel)
+      .reduce((s, it) => {
+        const sched = it.id === item.id ? schedule : computeSchedule(state.entries[it.id] || {}, state.initialCarry[it.id] || 0, it.thresholdYen, it.lotStep);
+        return s + totalHeldForItem(it, sched).total;
+      }, 0);
+    const proj7 = crossItemLots * perLotRateSafe * 7;
+    const proj30 = crossItemLots * perLotRateSafe * 30;
 
     html += `
       <div class="projection-card">
         <div class="projection-header">
-          <span class="proj-title">皮算用（保有 ${fmtUnit(totalHeld, item.lotStep, item.unitLabel)} ベース）</span>
+          <span class="proj-title">皮算用（全項目合計 ${fmtUnit(crossItemLots, item.lotStep, item.unitLabel)} ベース）</span>
           <span class="rate-input-wrap">
             ¥<input type="number" id="rate-input" value="${esc(perLotRateSafe)}" step="0.1" />/${esc(item.unitLabel)}/日
           </span>
