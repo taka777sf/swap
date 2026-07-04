@@ -1,4 +1,4 @@
-const CACHE_NAME = "swap-cal-v7";
+const CACHE_NAME = "swap-cal-v8";
 const ASSETS = [
   "./",
   "./index.html",

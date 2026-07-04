@@ -7,6 +7,7 @@
   const KEY_ITEMS = "swap-calendar-items";
   const KEY_ENTRIES = "swap-calendar-entries-v2"; // { itemId: { dateKey: amount } }
   const KEY_INITIAL = "swap-calendar-initial-v2"; // { itemId: number }
+  const KEY_MANUAL_LOTS = "swap-calendar-manual-lots"; // { itemId: { dateKey: lots } }
   const KEY_LAST_BACKUP = "swap-calendar-last-backup"; // ISO timestamp string
 
   // legacy (single-item) keys from the first version, used for one-time migration
@@ -23,6 +24,7 @@
     activeItemId: null,
     entries: {},      // itemId -> { dateKey: amount }
     initialCarry: {}, // itemId -> number
+    manualLots: {},   // itemId -> { dateKey: lots }  (bulk/manual lot purchases, outside the yen threshold)
     showItemSettings: false,
     showAddItem: false,
     persistStatus: "unknown", // "unknown" | "granted" | "denied" | "unsupported"
@@ -61,10 +63,11 @@
   }
 
   function loadState() {
-    let items = null, entries = null, initial = null;
+    let items = null, entries = null, initial = null, manualLots = null;
     try { const r = localStorage.getItem(KEY_ITEMS); if (r) items = JSON.parse(r); } catch (e) {}
     try { const r = localStorage.getItem(KEY_ENTRIES); if (r) entries = JSON.parse(r); } catch (e) {}
     try { const r = localStorage.getItem(KEY_INITIAL); if (r) initial = JSON.parse(r); } catch (e) {}
+    try { const r = localStorage.getItem(KEY_MANUAL_LOTS); if (r) manualLots = JSON.parse(r); } catch (e) {}
 
     if (!items) {
       // check for legacy single-item data to migrate
@@ -80,14 +83,17 @@
 
     if (!entries) entries = {};
     if (!initial) initial = {};
+    if (!manualLots) manualLots = {};
     items.forEach((it) => {
       if (!entries[it.id]) entries[it.id] = {};
       if (initial[it.id] === undefined) initial[it.id] = 0;
+      if (!manualLots[it.id]) manualLots[it.id] = {};
     });
 
     state.items = items;
     state.entries = entries;
     state.initialCarry = initial;
+    state.manualLots = manualLots;
     state.activeItemId = items[0].id;
 
     try {
@@ -105,6 +111,7 @@
         localStorage.setItem(KEY_ITEMS, JSON.stringify(state.items));
         localStorage.setItem(KEY_ENTRIES, JSON.stringify(state.entries));
         localStorage.setItem(KEY_INITIAL, JSON.stringify(state.initialCarry));
+        localStorage.setItem(KEY_MANUAL_LOTS, JSON.stringify(state.manualLots));
         if (indicator) setSaveIndicator("saved");
       } catch (e) {
         if (indicator) setSaveIndicator("idle");
@@ -125,11 +132,12 @@
   function exportBackup() {
     const payload = {
       type: "swap-calendar-backup",
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       items: state.items,
       entries: state.entries,
       initialCarry: state.initialCarry,
+      manualLots: state.manualLots,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -166,9 +174,11 @@
         state.items = data.items;
         state.entries = data.entries || {};
         state.initialCarry = data.initialCarry || {};
+        state.manualLots = data.manualLots || {};
         state.items.forEach((it) => {
           if (!state.entries[it.id]) state.entries[it.id] = {};
           if (state.initialCarry[it.id] === undefined) state.initialCarry[it.id] = 0;
+          if (!state.manualLots[it.id]) state.manualLots[it.id] = {};
         });
         state.activeItemId = state.items[0] ? state.items[0].id : null;
         persistAll(true);
@@ -193,6 +203,36 @@
   }
   function esc(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function fmtNumTrim(n) {
+    const r = Math.round((Number(n) || 0) * 100) / 100;
+    return String(r);
+  }
+
+  // total holdings (initial + auto-earned + manual purchases) for one item
+  function totalHeldForItem(item, schedule) {
+    const manual = state.manualLots[item.id] || {};
+    const manualTotal = Object.values(manual).reduce((s, v) => s + (Number(v) || 0), 0);
+    return {
+      manualTotal,
+      total: (Number(item.initialLots) || 0) + schedule.totalUnits + manualTotal,
+    };
+  }
+
+  // group all items' holdings by unit label, so mismatched units (ロット / 個 / 垢...) don't get summed together
+  function computeGroupedHoldings(items, entriesByItem, initialCarryByItem, manualLotsByItem) {
+    const groups = {}; // label -> total
+    items.forEach((it) => {
+      const entries = entriesByItem[it.id] || {};
+      const initialCarry = initialCarryByItem[it.id] || 0;
+      const sched = computeSchedule(entries, initialCarry, it.thresholdYen, it.lotStep);
+      const manual = manualLotsByItem[it.id] || {};
+      const manualTotal = Object.values(manual).reduce((s, v) => s + (Number(v) || 0), 0);
+      const total = (Number(it.initialLots) || 0) + sched.totalUnits + manualTotal;
+      groups[it.unitLabel] = (groups[it.unitLabel] || 0) + total;
+    });
+    return Object.keys(groups).map((label) => ({ label, total: groups[label] }));
   }
 
   function getItem(id) { return state.items.find((it) => it.id === id); }
@@ -250,6 +290,8 @@
     const entries = state.entries[item.id] || {};
     const initialCarry = state.initialCarry[item.id] || 0;
     const schedule = computeSchedule(entries, initialCarry, item.thresholdYen, item.lotStep);
+    const manualLots = state.manualLots[item.id] || {};
+    const { manualTotal, total: totalHeld } = totalHeldForItem(item, schedule);
     const { viewY, viewM } = state;
 
     const firstOfMonth = new Date(viewY, viewM, 1);
@@ -269,6 +311,10 @@
     const monthKeys = schedule.sortedKeys.filter((k) => k.startsWith(monthKeyPrefix));
     const monthTotal = monthKeys.reduce((s, k) => s + schedule.perDay[k].amount, 0);
     const monthUnits = monthKeys.reduce((s, k) => s + schedule.perDay[k].unitsGained, 0);
+    const monthManualLots = Object.keys(manualLots)
+      .filter((k) => k.startsWith(monthKeyPrefix))
+      .reduce((s, k) => s + (Number(manualLots[k]) || 0), 0);
+    const monthUnitsCombined = monthUnits + monthManualLots;
     const lastDayKey = dateKey(viewY, viewM, daysInMonth);
     const carryAtMonthEnd = carryAsOf(schedule.perDay, schedule.sortedKeys, lastDayKey, initialCarry);
     const monthLabel = `${viewY}年${viewM + 1}月`;
@@ -280,6 +326,9 @@
       .filter((k) => k.startsWith(monthKeyPrefix))
       .reduce((s, k) => s + combinedByDate[k], 0);
     const showCombined = state.items.length > 1;
+    const groupedHoldings = showCombined
+      ? computeGroupedHoldings(state.items, state.entries, state.initialCarry, state.manualLots)
+      : [];
 
     let html = "";
 
@@ -378,7 +427,8 @@
         </div>` : ""}
         <div class="stat-chip">
           <span class="label">今月獲得（${esc(item.unitLabel)}）</span>
-          <span class="value" style="color:var(--gold)">+${fmtUnit(monthUnits, item.lotStep, item.unitLabel)}</span>
+          <span class="value" style="color:var(--gold)">+${fmtUnit(monthUnitsCombined, item.lotStep, item.unitLabel)}</span>
+          ${monthManualLots > 0 ? `<span class="sub">内 購入分 +${fmtUnit(monthManualLots, item.lotStep, item.unitLabel)}</span>` : ""}
         </div>
         <div class="stat-chip">
           <span class="label">繰越残高（月末時点）</span>
@@ -386,13 +436,18 @@
           <span class="sub">次まで ${fmtYen(Math.max(0, item.thresholdYen - carryAtMonthEnd))}</span>
         </div>
         <div class="stat-chip">
-          <span class="label">累計（${esc(item.unitLabel)}）</span>
+          <span class="label">保有合計（${esc(item.unitLabel)}）</span>
           <div class="dual-value">
-            <span class="value" style="color:var(--gold)">${fmtUnit(schedule.totalUnits, item.lotStep, item.unitLabel)}</span>
-            ${Number(item.initialLots) ? `<span class="value alt">計 ${fmtUnit((Number(item.initialLots) || 0) + schedule.totalUnits, item.lotStep, item.unitLabel)}</span>` : ""}
+            <span class="value" style="color:var(--gold)">${fmtUnit(totalHeld, item.lotStep, item.unitLabel)}</span>
           </div>
-          <span class="sub">累計 ${fmtYen(schedule.totalAmount + (Number(initialCarry) || 0))}${Number(item.initialLots) ? ` ・ 初期${fmtUnit(Number(item.initialLots), item.lotStep, item.unitLabel)}` : ""}</span>
+          <span class="sub">初期${fmtUnit(Number(item.initialLots) || 0, item.lotStep, item.unitLabel)} + 自動${fmtUnit(schedule.totalUnits, item.lotStep, item.unitLabel)}${manualTotal ? ` + 購入${fmtUnit(manualTotal, item.lotStep, item.unitLabel)}` : ""}</span>
         </div>
+        ${showCombined ? `
+        <div class="stat-chip combined">
+          <span class="label">全項目 保有合計</span>
+          <span class="value" style="color:var(--gold)">${groupedHoldings.map((g) => `${fmtNumTrim(g.total)}${esc(g.label)}`).join(" / ")}</span>
+          <span class="sub">${state.items.length}項目の合計</span>
+        </div>` : ""}
       </div>`;
 
     const initialCarryBarHtml = `
@@ -442,12 +497,16 @@
         const amtCls = amount === null ? "" : amount > 0 ? "pos" : amount < 0 ? "neg" : "";
         const rawVal = entries[k] !== undefined ? entries[k] : "";
         const combinedAmt = combinedByDate[k] || 0;
+        const manualLotVal = Number(manualLots[k]) || 0;
 
         html += `
           <div class="day-cell ${isToday ? "today" : ""}">
             <div class="top-row">
               <span class="day-num">${c.dayNum}</span>
-              ${unitsGained > 0 ? `<span class="lot-badge">+${fmtUnit(unitsGained, item.lotStep, item.unitLabel)}</span>` : ""}
+              <span class="badge-group">
+                ${unitsGained > 0 ? `<span class="lot-badge">+${fmtUnit(unitsGained, item.lotStep, item.unitLabel)}</span>` : ""}
+                <button class="manual-lot-btn ${manualLotVal ? "has-value" : ""}" data-key="${k}" title="まとめ購入を記録">${manualLotVal ? `🛒${fmtNumTrim(manualLotVal)}` : "🛒"}</button>
+              </span>
             </div>
             <input class="amount ${amtCls}" type="number" inputmode="decimal" placeholder="—"
               data-key="${k}" value="${esc(rawVal)}" />
@@ -536,6 +595,7 @@
       const id = uid();
       state.items.push({ id, name, thresholdYen: threshold, lotStep: step || 0.1, unitLabel: unit, initialLots });
       state.entries[id] = {};
+      state.manualLots[id] = {};
       state.initialCarry[id] = 0;
       state.activeItemId = id;
       state.showAddItem = false;
@@ -570,6 +630,7 @@
       state.items = state.items.filter((it) => it.id !== item.id);
       delete state.entries[item.id];
       delete state.initialCarry[item.id];
+      delete state.manualLots[item.id];
       state.activeItemId = state.items[0] ? state.items[0].id : null;
       state.showItemSettings = false;
       persistAll(true);
@@ -600,6 +661,29 @@
         render();
       });
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") input.blur(); });
+    });
+
+    document.querySelectorAll(".manual-lot-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.key;
+        const item = getItem(state.activeItemId);
+        const manual = state.manualLots[state.activeItemId] || (state.manualLots[state.activeItemId] = {});
+        const current = manual[key] !== undefined ? manual[key] : "";
+        const input = window.prompt(
+          `${key} にまとめて購入した${item.unitLabel}数を入力してください（削除する場合は空欄でOK）`,
+          current === "" ? "" : String(current)
+        );
+        if (input === null) return; // cancelled
+        if (input.trim() === "") {
+          delete manual[key];
+        } else {
+          const n = Number(input);
+          if (Number.isNaN(n)) { alert("数値を入力してください。"); return; }
+          if (n === 0) { delete manual[key]; } else { manual[key] = n; }
+        }
+        persistAll(true);
+        render();
+      });
     });
 
     document.getElementById("export-btn").onclick = exportBackup;
