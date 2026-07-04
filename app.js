@@ -80,7 +80,7 @@
     state.fxRateStatus = "loading";
     render();
     try {
-      const res = await fetch("https://api.frankfurter.app/latest?from=TRY&to=JPY");
+      const res = await fetch("https://api.frankfurter.dev/v1/latest?from=TRY&to=JPY");
       if (!res.ok) throw new Error("bad response");
       const data = await res.json();
       const rate = data && data.rates && data.rates.JPY;
