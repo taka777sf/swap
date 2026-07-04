@@ -340,9 +340,9 @@ button {
   border-color: #4A3D22;
 }
 .day-cell .confirm-lot-btn.confirmed {
-  color: var(--green);
-  background: var(--green-soft);
-  border-color: #254235;
+  color: var(--gold);
+  background: var(--gold-soft);
+  border-color: #4A3D22;
   opacity: 0.85;
 }
 

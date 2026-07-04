@@ -554,7 +554,7 @@
             </div>
             <input class="amount ${amtCls}" type="number" inputmode="decimal" placeholder="円"
               data-key="${k}" value="${esc(rawVal)}" />
-            <input class="manual-lots-input" type="number" inputmode="decimal" step="0.01" placeholder="${esc(item.unitLabel)}"
+            <input class="manual-lots-input" type="number" inputmode="decimal" step="0.01" placeholder="+"
               data-key="${k}" value="${esc(manualLotVal)}" />
             ${showCombined ? `<span class="combined-label">計 ${combinedAmt !== 0 ? fmtYen(combinedAmt) : "—"}</span>` : ""}
           </div>`;
