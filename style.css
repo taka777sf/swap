@@ -170,6 +170,108 @@ button {
   color: var(--gold);
 }
 
+.margin-card {
+  background: var(--panel-alt);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+.margin-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.margin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.margin-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.margin-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.margin-input-wrap input {
+  width: 100px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  padding: 5px 7px;
+  text-align: right;
+}
+.fx-refresh-btn {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 13px;
+  line-height: 1;
+}
+.margin-sub {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin: -4px 0 10px;
+  text-align: right;
+}
+.leverage-row { margin-bottom: 4px; }
+.leverage-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gold);
+}
+.leverage-slider {
+  width: 100%;
+  margin: 4px 0 14px;
+  accent-color: var(--gold);
+}
+.margin-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.margin-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.margin-result.highlight {
+  background: var(--gold-soft);
+  border: 1px solid #4A3D22;
+}
+.mr-label { font-size: 11px; color: var(--text-muted); }
+.mr-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.margin-result.highlight .mr-value { color: var(--gold); font-size: 17px; }
+.margin-note {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin: 10px 0 0;
+  line-height: 1.5;
+}
+
 .item-tabs {
   display: flex;
   gap: 6px;

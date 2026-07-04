@@ -10,6 +10,7 @@
   const KEY_MANUAL_LOTS = "swap-calendar-manual-lots"; // { itemId: { dateKey: lots } }
   const KEY_CONFIRMED_LOTS = "swap-calendar-confirmed-lots"; // { itemId: { dateKey: true } }
   const KEY_LAST_BACKUP = "swap-calendar-last-backup"; // ISO timestamp string
+  const KEY_FX_RATE = "swap-calendar-fx-rate"; // { rate, fetchedAt, source }
 
   // legacy (single-item) keys from the first version, used for one-time migration
   const LEGACY_ENTRIES = "swap-calendar-entries";
@@ -31,6 +32,10 @@
     showAddItem: false,
     persistStatus: "unknown", // "unknown" | "granted" | "denied" | "unsupported"
     lastBackupAt: null,
+    fxRate: null,        // TRY/JPY rate, number
+    fxRateFetchedAt: null, // ISO string
+    fxRateSource: null,  // "auto" | "manual"
+    fxRateStatus: "idle", // "idle" | "loading" | "error"
   };
   let saveTimer = null;
   let saveIndicatorTimer = null;
@@ -56,13 +61,51 @@
     render();
   }
 
+  // ---------- TRY/JPY exchange rate (auto-refreshed once per day, editable) ----------
+  function persistFxRate() {
+    try {
+      localStorage.setItem(KEY_FX_RATE, JSON.stringify({
+        rate: state.fxRate,
+        fetchedAt: state.fxRateFetchedAt,
+        source: state.fxRateSource,
+      }));
+    } catch (e) {}
+  }
+
+  async function fetchFxRate(force) {
+    const todayStr = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`;
+    const lastFetchDay = state.fxRateFetchedAt ? state.fxRateFetchedAt.slice(0, 10) : null;
+    if (!force && lastFetchDay === todayStr && state.fxRate) return; // already fresh for today
+
+    state.fxRateStatus = "loading";
+    render();
+    try {
+      const res = await fetch("https://api.frankfurter.app/latest?from=TRY&to=JPY");
+      if (!res.ok) throw new Error("bad response");
+      const data = await res.json();
+      const rate = data && data.rates && data.rates.JPY;
+      if (!rate) throw new Error("no rate");
+      state.fxRate = rate;
+      state.fxRateFetchedAt = new Date().toISOString();
+      state.fxRateSource = "auto";
+      state.fxRateStatus = "idle";
+      persistFxRate();
+    } catch (e) {
+      state.fxRateStatus = "error";
+    }
+    render();
+  }
+
   // ---------- storage / migration ----------
   function uid() {
     return "item-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
 
   function defaultItems() {
-    return [{ id: uid(), name: "TRY/JPYスワップ", thresholdYen: 2000, lotStep: 0.1, unitLabel: "ロット", initialLots: 0, perLotDailyYen: 25 }];
+    return [{
+      id: uid(), name: "TRY/JPYスワップ", thresholdYen: 2000, lotStep: 0.1, unitLabel: "ロット",
+      initialLots: 0, perLotDailyYen: 25, desiredMonthlyYen: 100000, leverage: 2, unitsPerLot: 10000,
+    }];
   }
 
   function loadState() {
@@ -123,6 +166,16 @@
     } catch (e) {
       state.lastBackupAt = null;
     }
+
+    try {
+      const r = localStorage.getItem(KEY_FX_RATE);
+      if (r) {
+        const parsed = JSON.parse(r);
+        state.fxRate = parsed.rate;
+        state.fxRateFetchedAt = parsed.fetchedAt;
+        state.fxRateSource = parsed.source || "auto";
+      }
+    } catch (e) {}
   }
 
   function persistAll(indicator) {
@@ -622,6 +675,67 @@
         </div>
       </div>`;
 
+    // ---- required-lots / margin simulator ----
+    const desiredMonthly = Number(item.desiredMonthlyYen) || 0;
+    const leverage = Number(item.leverage) || 1;
+    const unitsPerLot = Number(item.unitsPerLot) || 10000;
+    const fxRateVal = Number(state.fxRate) || 0;
+    const rawLotsNeeded = perLotRateSafe > 0 ? desiredMonthly / (perLotRateSafe * 30) : 0;
+    const lotsNeeded = Math.ceil(rawLotsNeeded * 10) / 10; // round up to nearest 0.1
+    const notionalYen = lotsNeeded * unitsPerLot * fxRateVal;
+    const requiredMargin = leverage > 0 ? notionalYen / leverage : 0;
+    const fxStatusLabel =
+      state.fxRateStatus === "loading" ? "取得中…" :
+      state.fxRateStatus === "error" ? "取得失敗（前回値 or 手動入力を使用）" :
+      state.fxRateFetchedAt ? `${state.fxRateSource === "manual" ? "手動入力" : "自動取得"}: ${new Date(state.fxRateFetchedAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}` :
+      "未取得（手動で入力してください）";
+
+    html += `
+      <div class="margin-card">
+        <div class="margin-title">必要ロット・軍資金シミュレーター</div>
+
+        <div class="margin-row">
+          <label class="margin-label">毎月欲しい金額</label>
+          <span class="margin-input-wrap">¥<input type="number" id="desired-monthly-input" value="${esc(desiredMonthly)}" step="1000" /></span>
+        </div>
+
+        <div class="margin-row">
+          <label class="margin-label">トルコリラ/円レート</label>
+          <span class="margin-input-wrap">
+            <input type="number" id="fx-rate-input" value="${esc(fxRateVal || "")}" step="0.01" placeholder="未取得" />
+            <button class="fx-refresh-btn" id="fx-refresh-btn" title="今すぐ再取得">🔄</button>
+          </span>
+        </div>
+        <div class="margin-sub">${esc(fxStatusLabel)}</div>
+
+        <div class="margin-row">
+          <label class="margin-label">1ロット＝◯通貨</label>
+          <span class="margin-input-wrap"><input type="number" id="units-per-lot-input" value="${esc(unitsPerLot)}" step="1000" /></span>
+        </div>
+
+        <div class="margin-row leverage-row">
+          <label class="margin-label">レバレッジ</label>
+          <span class="leverage-value">${leverage.toFixed(1)}倍</span>
+        </div>
+        <input type="range" id="leverage-slider" min="1" max="4" step="0.1" value="${leverage}" class="leverage-slider" />
+
+        <div class="margin-results">
+          <div class="margin-result">
+            <span class="mr-label">必要ロット数</span>
+            <span class="mr-value">${lotsNeeded.toFixed(1)}${esc(item.unitLabel)}</span>
+          </div>
+          <div class="margin-result">
+            <span class="mr-label">取引金額</span>
+            <span class="mr-value">${fxRateVal ? fmtYen(notionalYen) : "—"}</span>
+          </div>
+          <div class="margin-result highlight">
+            <span class="mr-label">必要証拠金（軍資金）</span>
+            <span class="mr-value">${fxRateVal ? fmtYen(requiredMargin) : "レートを入力してください"}</span>
+          </div>
+        </div>
+        <p class="margin-note">ライトFX基準（取引金額 ÷ レバレッジ）の概算です。実際の必要証拠金は口座状況により異なります。</p>
+      </div>`;
+
     html += `
       <p class="footnote">
         各日のマスに金額を入力すると自動保存されます。繰越が閾値に達した日は金色バッジで表示し、余剰分は翌日以降へ繰り越されます。
@@ -682,7 +796,7 @@
       if (state.items.length >= MAX_ITEMS) { alert(`項目は最大${MAX_ITEMS}個までです。`); return; }
       if (!threshold || threshold <= 0) { alert("閾値は1円以上で入力してください。"); return; }
       const id = uid();
-      state.items.push({ id, name, thresholdYen: threshold, lotStep: step || 0.1, unitLabel: unit, initialLots });
+      state.items.push({ id, name, thresholdYen: threshold, lotStep: step || 0.1, unitLabel: unit, initialLots, perLotDailyYen: 25, desiredMonthlyYen: 100000, leverage: 2, unitsPerLot: 10000 });
       state.entries[id] = {};
       state.manualLots[id] = {};
       state.confirmedLots[id] = {};
@@ -750,6 +864,62 @@
       rateInput.addEventListener("keydown", (e) => { if (e.key === "Enter") rateInput.blur(); });
     }
 
+    const desiredInput = document.getElementById("desired-monthly-input");
+    if (desiredInput) {
+      desiredInput.addEventListener("blur", () => {
+        const item = getItem(state.activeItemId);
+        const n = Number(desiredInput.value);
+        item.desiredMonthlyYen = Number.isFinite(n) ? n : 0;
+        persistAll(true);
+        render();
+      });
+      desiredInput.addEventListener("keydown", (e) => { if (e.key === "Enter") desiredInput.blur(); });
+    }
+
+    const unitsPerLotInput = document.getElementById("units-per-lot-input");
+    if (unitsPerLotInput) {
+      unitsPerLotInput.addEventListener("blur", () => {
+        const item = getItem(state.activeItemId);
+        const n = Number(unitsPerLotInput.value);
+        item.unitsPerLot = Number.isFinite(n) && n > 0 ? n : 10000;
+        persistAll(true);
+        render();
+      });
+      unitsPerLotInput.addEventListener("keydown", (e) => { if (e.key === "Enter") unitsPerLotInput.blur(); });
+    }
+
+    const leverageSlider = document.getElementById("leverage-slider");
+    if (leverageSlider) {
+      leverageSlider.addEventListener("input", () => {
+        const item = getItem(state.activeItemId);
+        item.leverage = Number(leverageSlider.value);
+        const valEl = document.querySelector(".leverage-value");
+        if (valEl) valEl.textContent = `${item.leverage.toFixed(1)}倍`;
+        // update results live without a full re-render while dragging
+        persistAll(false);
+      });
+      leverageSlider.addEventListener("change", () => { persistAll(true); render(); });
+    }
+
+    const fxRateInput = document.getElementById("fx-rate-input");
+    if (fxRateInput) {
+      fxRateInput.addEventListener("blur", () => {
+        const n = Number(fxRateInput.value);
+        if (Number.isFinite(n) && n > 0) {
+          state.fxRate = n;
+          state.fxRateFetchedAt = new Date().toISOString();
+          state.fxRateSource = "manual";
+          state.fxRateStatus = "idle";
+          persistFxRate();
+        }
+        render();
+      });
+      fxRateInput.addEventListener("keydown", (e) => { if (e.key === "Enter") fxRateInput.blur(); });
+    }
+
+    const fxRefreshBtn = document.getElementById("fx-refresh-btn");
+    if (fxRefreshBtn) fxRefreshBtn.addEventListener("click", () => fetchFxRate(true));
+
     document.querySelectorAll(".day-cell input.amount").forEach((input) => {
       input.addEventListener("blur", () => {
         const key = input.dataset.key;
@@ -807,4 +977,5 @@
   loadState();
   render();
   requestPersistentStorage();
+  fetchFxRate(false);
 })();
