@@ -62,7 +62,7 @@
   }
 
   function defaultItems() {
-    return [{ id: uid(), name: "TRY/JPYスワップ", thresholdYen: 2000, lotStep: 0.1, unitLabel: "ロット", initialLots: 0 }];
+    return [{ id: uid(), name: "TRY/JPYスワップ", thresholdYen: 2000, lotStep: 0.1, unitLabel: "ロット", initialLots: 0, perLotDailyYen: 25 }];
   }
 
   function loadState() {
@@ -579,6 +579,31 @@
     html += initialCarryBarHtml;
     html += backupReminderHtml;
 
+    const perLotRate = Number(item.perLotDailyYen);
+    const perLotRateSafe = Number.isFinite(perLotRate) ? perLotRate : 25;
+    const proj7 = totalHeld * perLotRateSafe * 7;
+    const proj30 = totalHeld * perLotRateSafe * 30;
+
+    html += `
+      <div class="projection-card">
+        <div class="projection-header">
+          <span class="proj-title">皮算用（保有 ${fmtUnit(totalHeld, item.lotStep, item.unitLabel)} ベース）</span>
+          <span class="rate-input-wrap">
+            ¥<input type="number" id="rate-input" value="${esc(perLotRateSafe)}" step="0.1" />/${esc(item.unitLabel)}/日
+          </span>
+        </div>
+        <div class="projection-rows">
+          <div class="projection-row">
+            <span class="proj-label">7日皮算用</span>
+            <span class="proj-value">${fmtYen(proj7)}</span>
+          </div>
+          <div class="projection-row">
+            <span class="proj-label">30日皮算用</span>
+            <span class="proj-value">${fmtYen(proj30)}</span>
+          </div>
+        </div>
+      </div>`;
+
     html += `
       <p class="footnote">
         各日のマスに金額を入力すると自動保存されます。繰越が閾値に達した日は金色バッジで表示し、余剰分は翌日以降へ繰り越されます。
@@ -693,6 +718,18 @@
         render();
       });
       initInput.addEventListener("keydown", (e) => { if (e.key === "Enter") initInput.blur(); });
+    }
+
+    const rateInput = document.getElementById("rate-input");
+    if (rateInput) {
+      rateInput.addEventListener("blur", () => {
+        const item = getItem(state.activeItemId);
+        const n = Number(rateInput.value);
+        item.perLotDailyYen = Number.isFinite(n) ? n : 25;
+        persistAll(true);
+        render();
+      });
+      rateInput.addEventListener("keydown", (e) => { if (e.key === "Enter") rateInput.blur(); });
     }
 
     document.querySelectorAll(".day-cell input.amount").forEach((input) => {
