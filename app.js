@@ -227,6 +227,10 @@
     const decimals = step < 1 ? String(step).split(".")[1].length : 0;
     return (Math.round(n * Math.pow(10, decimals)) / Math.pow(10, decimals)).toFixed(decimals) + label;
   }
+  function fmtUnitNum(n, step) {
+    const decimals = step < 1 ? String(step).split(".")[1].length : 0;
+    return (Math.round(n * Math.pow(10, decimals)) / Math.pow(10, decimals)).toFixed(decimals);
+  }
   function esc(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
@@ -542,8 +546,8 @@
         let lotIndicator = "";
         if (unitsGained > 0) {
           lotIndicator = isConfirmed
-            ? `<button class="confirm-lot-btn confirmed" data-key="${k}" title="購入済み（タップで取り消し）">✓ ${fmtUnit(unitsGained, item.lotStep, item.unitLabel)}</button>`
-            : `<button class="confirm-lot-btn pending" data-key="${k}" title="購入したらタップ">☐ ${fmtUnit(unitsGained, item.lotStep, item.unitLabel)}</button>`;
+            ? `<button class="confirm-lot-btn confirmed" data-key="${k}" title="購入済み（タップで取り消し）">✓ ${fmtUnitNum(unitsGained, item.lotStep)}</button>`
+            : `<button class="confirm-lot-btn pending" data-key="${k}" title="購入したらタップ">☐ ${fmtUnitNum(unitsGained, item.lotStep)}</button>`;
         }
 
         html += `
